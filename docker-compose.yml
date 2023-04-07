@@ -1,0 +1,9 @@
+version: '3.3'
+
+services:
+  calendar2mqtt:
+    image: pssmarket:1.0
+    volumes:
+      - /volume1/docker/pssmarket:/data
+    network_mode: "host"
+    restart: unless-stopped
