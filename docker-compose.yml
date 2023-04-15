@@ -2,7 +2,7 @@ version: '3.3'
 
 services:
   pssmarket:
-    image: pssmarket:1.0
+    image: pssmarket:1.1
     volumes:
       - /volume1/docker/pssmarket:/data
     network_mode: "host"

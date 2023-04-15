@@ -1,7 +1,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-
+import logging as log
 
 class TelegramBot:
     def __init__(self, config, market, items):
@@ -25,66 +25,81 @@ class TelegramBot:
             self._dp.register_message_handler(handler[0], commands=handler[1])
 
     async def _market_command_callback(self, message: Message) -> None:
-        texts = message.text.split(" ")
+        try:
+            texts = message.text.split(" ")
 
-        if len(texts) >= 2:
-            command = texts[1]
-        else:
-            command = None
+            if len(texts) >= 2:
+                command = texts[1]
+            else:
+                command = None
 
-        reply = ""
-        item = ""
-        stats = []
-        fail = False
-        all_stats = self._market.get_stat_keys()
+            reply = ""
+            item = ""
+            stats = []
+            fail = False
+            all_stats = self._market.get_stat_keys()
 
-        def get_item_from_texts(texts) -> (str, int):
-            index = 2
-            item = texts[index]
-            for next_item in texts[3:]:
-                index += 1
-                item += f" {next_item}"
-                if '"' in next_item:
-                    break
-            item = item.replace('"', "")
-            return item, index
+            def get_item_from_texts(texts) -> (str, int):
+                    index = 2
+                    item = texts[index]
+                    if '"' in item:
+                        log.info(f"\" in \"{item}\"")
+                        for next_item in texts[3:]:
+                            index += 1
+                            item += f" {next_item}"
+                            if '"' in next_item:
+                                break
+                    else:
+                        log.info(f"\" not in \"{item}\"")
+                    item = item.replace('"', "")
+                    return item, index
 
-        if command == "add":
-            if len(texts) >= 4:
-                item, index = get_item_from_texts(texts)
-                if self._items.get_design_id_by_name(item) is None:
-                    fail = True
-                    reply = f"Unknown item name {item}. "
-                stats = texts[index + 1:]
-                for stat in stats:
-                    if stat not in stats:
+            if command == "add":
+                if len(texts) >= 3:
+                    item, index = get_item_from_texts(texts)
+                    design_id = self._items.get_design_id_by_name(item)
+                    if design_id is None:
                         fail = True
-                        reply = f"Stat not in {stats}. "
-                        break
+                        reply = f"Unknown item name {item}. "
+                    else:
+                        stats = texts[index + 1:]
+
+                        if self._items.item_can_have_substats(design_id):
+                            if len(stats) > 0:
+                                for stat in stats:
+                                    if stat not in all_stats:
+                                        fail = True
+                                        reply = f"Stat not in {stats}."
+                            else:
+                                stats = all_stats
+                        else:
+                            stats = []
+                else:
+                    fail = True
+
+                if not fail:
+                    await self._market.add_interest_items(item, stats)
+                    reply = "Added successfully."
+            elif command == "remove":
+                item, _ = get_item_from_texts(texts)
+                if not self._market.remove_interest_items(item):
+                    fail = True
+                    reply = "No such item."
+                else:
+                    reply = "Removed successfully."
             else:
+                market_list = self._market.list()
+                reply = f"Current items:"
+                for item in market_list:
+                    reply += f"\n{item}: \"{self._items.get_name_by_design_id(item)}\": {' '.join(market_list[item]['stats'])}"
                 fail = True
 
-            if not fail:
-                self._market.add_interest_items(item, stats)
-                reply = "Added successfully."
-        elif command == "remove":
-            item, _ = get_item_from_texts(texts)
-            if not self._market.remove_interest_items(item):
-                fail = True
-                reply = "No such item."
+            if fail:
+                await message.answer(f"{reply}\nUsage:\n/market add \"King Husky\" {' '.join(all_stats)}\n/market remove \"King Husky\"")
             else:
-                reply = "Removed successfully."
-        else:
-            market_list = self._market.list()
-            reply = f"Current items:"
-            for item in market_list:
-                reply += f"\n{item}: \"{self._items.get_name_by_design_id(item)}\": {' '.join(market_list[item]['stats'])}"
-            fail = True
-
-        if fail:
-            await message.answer(f"{reply}\nUsage:\n/market add \"King Husky\" {' '.join(all_stats)}\n/market remove \"King Husky\"")
-        else:
-            await message.answer(f"{reply}")
+                await message.answer(f"{reply}")
+        except Exception as e:
+            log.info(f"EXCEPTION {e}")
 
 
     async def _start_command_callback(self, message: Message) -> None:
@@ -114,5 +129,8 @@ class TelegramBot:
     async def run(self):
         await self._dp.start_polling(self._bot)
 
-    async def send_message(self, message: str):
-        await self._bot.send_message(self._chat_id, message)
+    async def send_message(self, message: str, html=False):
+        if html:
+            await self._bot.send_message(self._chat_id, message, parse_mode="HTML", disable_web_page_preview=True)
+        else:
+            await self._bot.send_message(self._chat_id, message, disable_web_page_preview=True)

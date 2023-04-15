@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pss_login import Device, _create_device_key
 import cloudpickle as pickle
 import asyncio
@@ -49,7 +50,7 @@ class PSSApi:
 
         return df
 
-    def get_sales_for_design_id(self, design_id: int, past_days=2) -> pd.DataFrame:
+    async def get_sales_for_design_id(self, design_id: int, past_days=2, max_count=100) -> pd.DataFrame:
         start = 0
         end = 20
 
@@ -68,7 +69,8 @@ class PSSApi:
                                      parse_dates=["StatusDate"])
             except Exception as e:
                 if "Too many" in response.text:
-                    time.sleep(10)
+                    log.info(f"Got too many response while getting sales for {design_id}")
+                    await asyncio.sleep(10)
                     continue
                 log.error(f"ERROR: {response.text}")
                 return df
@@ -86,23 +88,27 @@ class PSSApi:
             end += 20
             if pd.Timestamp.now() - df.min()["StatusDate"] > pd.Timedelta(days=past_days):
                 break
+            if len(df) > max_count:
+                break
+            await asyncio.sleep(2)
         return df
 
-    def get_market_messages(self, design_id: int) -> pd.DataFrame:
+    def get_market_messages(self, design_id: Optional[int], count=999999) -> pd.DataFrame:
 
         log.debug(f"Getting market for id {design_id}")
 
         df: pd.DataFrame = None
         params = {
-            'itemDesignId': design_id,
             'currencyType': 'Unknown',
             'itemSubType': 'None',
             'rarity': 'None',
             'userId': 0,
             'skip': 0,
-            'take': 999999,
+            'take': count,
             'accessToken': self._token,
         }
+        if design_id:
+            params['itemDesignId'] = design_id
         log.debug(params)
         try:
             response = requests.get(self.BASE_URL + "/MessageService/ListActiveMarketplaceMessages5", params=params)

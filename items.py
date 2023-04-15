@@ -47,3 +47,28 @@ class Items:
                     return self._items[self._items["ItemDesignId"] == design_id].iloc[0]["MarketPrice"]
                 except:
                     return None
+    
+    def get_rarity(self, design_id: int) -> Optional[str]:
+        name = self.get_name_by_design_id(design_id)
+        if name is None:
+            return None
+        else:
+            try:
+                return self._items[self._items["ItemDesignId"] == design_id].iloc[0]["Rarity"]
+            except:
+                return None
+    
+    def get_subtype(self, design_id: int) -> Optional[str]:
+        name = self.get_name_by_design_id(design_id)
+        if name is None:
+            return None
+        else:
+            try:
+                return self._items[self._items["ItemDesignId"] == design_id].iloc[0]["ItemSubType"]
+            except:
+                return None
+
+    def item_can_have_substats(self, design_id: int) -> Optional[str]:
+        rarity = self.get_rarity(design_id)
+        subtype = self.get_subtype(design_id)
+        return "Equipment" in subtype and rarity in ("Hero", "Special", "Legendary")
