@@ -10,6 +10,8 @@ from asyncio import Lock
 import settings
 import utils
 
+import logging as log
+
 # ---------- Constants & Internals ----------
 
 ACCESS_TOKEN_TIMEOUT: timedelta = timedelta(minutes=3)
@@ -39,13 +41,13 @@ class DeviceInUseError(LoginError):
 # ---------- Classes ----------
 
 class Device():
-    def __init__(self, device_key: str, can_login_until: datetime = None, device_type: str = None) -> None:
+    def __init__(self, device_key: str, can_login_until: datetime = None, device_type: str = None, access_token: str = None, last_login: datetime = None) -> None:
         self.__key: str = device_key
         self.__checksum: str = None
         self.__device_type = device_type or DEFAULT_DEVICE_TYPE
-        self.__last_login: datetime = None
+        self.__last_login: datetime = last_login
         self.__can_login_until: datetime = can_login_until
-        self.__access_token: str = None
+        self.__access_token: str = access_token
         self.__access_token_expires_at: datetime = None
         self.__set_access_token_expiry()
         self.__user: dict = None
@@ -71,6 +73,10 @@ class Device():
     @property
     def can_login_until(self) -> datetime:
         return self.__can_login_until
+    
+    @property
+    def last_login(self) -> datetime:
+        return self.__last_login
 
     @property
     def checksum(self) -> str:
@@ -86,7 +92,9 @@ class Device():
         """
         async with self.__token_lock:
             if self.access_token_expired:
+                log.info("Access token is expired!")
                 if self.can_login:
+                    log.info("Logging in!")
                     await self.__login()
                 else:
                     raise LoginError('Cannot login currently. Please try again later.')

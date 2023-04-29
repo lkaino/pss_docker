@@ -13,13 +13,15 @@ class Items:
     }
 
     def __init__(self, data_path, api: PSSApi):
-        filename = os.path.join(data_path, "items", f"df")
-        if os.path.exists(filename):
-            with open(filename, "rb") as infile:
+        self._filename = os.path.join(data_path, "items", f"df")
+    
+    async def setup(self):
+        if os.path.exists(self._filename):
+            with open(self._filename, "rb") as infile:
                 self._items = pickle.load(infile)
         else:
-            self._items = api.get_items()
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self._items = await api.get_items()
+            os.makedirs(os.path.dirname(self._filename), exist_ok=True)
             with open(filename, "wb") as outfile:
                 pickle.dump(self._items, outfile)
 

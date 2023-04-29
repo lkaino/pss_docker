@@ -14,29 +14,41 @@ class PSSApi:
 
     def __init__(self, data_path):
         self._data_path = data_path
-        self._token = None
 
     async def setup(self):
-        self._token = await self._get_token()
+        self._dev = await self._get_device()
+        response = requests.get('http://ifconfig.me')
+        log.info(f"External IP address: {response.text}")
 
-    async def _get_token(self):
-        filename = os.path.join(self._data_path, "dev.pickle")
-        if os.path.exists(filename):
+    async def _get_token(self, get_new=False):
+        return await self._dev.get_access_token()
+
+    async def _get_device(self, get_new=False) -> Optional[Device]:
+        filename = os.path.join(self._data_path, "device.pickle")
+        dev = None
+        if not get_new and os.path.exists(filename):
             with open(filename, "rb") as infile:
-                _token = pickle.load(infile)
+                data = pickle.load(infile)
+                log.info(f"Creating device with {data}")
+                dev = Device(device_key=data[0], can_login_until=data[1], access_token=data[2], last_login=data[3])
         else:
             dev = Device(_create_device_key())
-            _token = await dev.get_access_token()
+            token = await dev.get_access_token()
             with open(filename, "wb") as outfile:
-                pickle.dump(_token, outfile)
+                data = (dev.key, dev.can_login_until, token, dev.last_login)
+                pickle.dump(data, outfile)
 
-        return _token
+        return dev
 
-    def get_items(self, _token=None) -> pd.DataFrame:
+    async def _check_if_token_expired_from_response(self, response: str):
+        if "Failed to authorize" in response:
+            self.token = await self._get_token(get_new=True)
+
+    async def get_items(self, _token=None) -> pd.DataFrame:
         log.info(f"Getting sales for id {id}")
         df: pd.DataFrame = None
         params = {
-            'accessToken': self._token,
+            'accessToken': await self._get_token(),
         }
         try:
             response = requests.get(self.BASE_URL + "ItemService/ListItemDesigns2", params=params)
@@ -45,6 +57,26 @@ class PSSApi:
 
         try:
             df = pd.read_xml(response.text, xpath="/ItemService/ListItemDesigns/ItemDesigns//ItemDesign")
+        except Exception as e:
+            await self._check_if_token_expired_from_response(response.text)
+            print(f"ERROR: {e}: {response.text}")
+
+        return df
+
+    async def get_star_system_markers(self, _token=None) -> pd.DataFrame:
+        log.info(f"Getting star system markers")
+        df: pd.DataFrame = None
+        params = {
+            'accessToken': await self._get_token(),
+        }
+        try:
+            response = requests.get(self.BASE_URL + "GalaxyService/ListStarSystemMarkers", params=params)
+        except Exception as e:
+            return df
+
+        try:
+            df = pd.read_xml(response.text, xpath="/GalaxyService/ListStarSystemMarkers/StarSystemMarkers//StarSystemMarker",
+                             parse_dates=["StarSystemArrivalDate", "ExpiryDate", "TravelStartDate", "LastUpdateDate"])
         except Exception as e:
             print(f"ERROR: {e}: {response.text}")
 
@@ -61,7 +93,7 @@ class PSSApi:
                 'saleStatus': 'Sold',
                 'from': start,
                 'to': end,
-                'accessToken': self._token,
+                'accessToken': await self._get_token(),
             }
             response = requests.get(self.BASE_URL + "/MarketService/ListSalesByItemDesignId", params=params)
             try:
@@ -72,6 +104,7 @@ class PSSApi:
                     log.info(f"Got too many response while getting sales for {design_id}")
                     await asyncio.sleep(10)
                     continue
+                await self._check_if_token_expired_from_response(response.text)
                 log.error(f"ERROR: {response.text}")
                 return df
             len_all = len(df_new)
@@ -86,14 +119,14 @@ class PSSApi:
                 break
             start += 20
             end += 20
-            if pd.Timestamp.now() - df.min()["StatusDate"] > pd.Timedelta(days=past_days):
+            if pd.Timestamp.now() - df["StatusDate"].min() > pd.Timedelta(days=past_days):
                 break
             if len(df) > max_count:
                 break
             await asyncio.sleep(2)
         return df
 
-    def get_market_messages(self, design_id: Optional[int], count=999999) -> pd.DataFrame:
+    async def get_market_messages(self, design_id: Optional[int], count=999999) -> pd.DataFrame:
 
         log.debug(f"Getting market for id {design_id}")
 
@@ -105,7 +138,7 @@ class PSSApi:
             'userId': 0,
             'skip': 0,
             'take': count,
-            'accessToken': self._token,
+            'accessToken': await self._get_token(),
         }
         if design_id:
             params['itemDesignId'] = design_id
@@ -121,6 +154,7 @@ class PSSApi:
             df = pd.read_xml(response.text, xpath="/MessageService/ListActiveMarketplaceMessages/Messages//Message",
                              parse_dates=["MessageDate"])
         except Exception as e:
+            await self._check_if_token_expired_from_response(response.text)
             if "Too many" in response.text:
                 time.sleep(10)
         return df

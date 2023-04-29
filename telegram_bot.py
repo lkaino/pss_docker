@@ -18,11 +18,76 @@ class TelegramBot:
         handlers = [
             (self._start_command_callback, ['start']),
             (self._market_command_callback, ['market']),
+            (self._trader_command_callback, ['trader']),
             (self._echo_handler, None)
         ]
 
         for handler in handlers:
             self._dp.register_message_handler(handler[0], commands=handler[1])
+
+    async def _trader_command_callback(self, message: Message) -> None:
+        try:
+            texts = message.text.split(" ")
+
+            if len(texts) >= 2:
+                command = texts[1]
+            else:
+                command = None
+
+            reply = ""
+            item = ""
+            stats = []
+            fail = False
+            all_stats = self._market.get_stat_keys()
+
+            def get_item_from_texts(texts) -> (str, int):
+                    index = 2
+                    item = texts[index]
+                    if '"' in item:
+                        log.info(f"\" in \"{item}\"")
+                        for next_item in texts[3:]:
+                            index += 1
+                            item += f" {next_item}"
+                            if '"' in next_item:
+                                break
+                    else:
+                        log.info(f"\" not in \"{item}\"")
+                    item = item.replace('"', "")
+                    return item, index
+
+            if command == "add":
+                if len(texts) >= 3:
+                    item, index = get_item_from_texts(texts)
+                    design_id = self._items.get_design_id_by_name(item)
+                    if design_id is None:
+                        fail = True
+                        reply = f"Unknown item name {item}. "
+                else:
+                    fail = True
+
+                if not fail:
+                    await self._market.add_trader_item(item)
+                    reply = "Added successfully."
+            elif command == "remove":
+                item, _ = get_item_from_texts(texts)
+                if not self._market.remove_trader_item(item):
+                    fail = True
+                    reply = "No such item."
+                else:
+                    reply = "Removed successfully."
+            else:
+                trader_list = self._market.list_trader_items()
+                reply = f"Current trader items:"
+                for item in trader_list:
+                    reply += f"\n{self._items.get_name_by_design_id(item)}"
+                fail = True
+
+            if fail:
+                await message.answer(f"{reply}\nUsage:\n/trader add \"King Husky\"\n/trader remove \"King Husky\"")
+            else:
+                await message.answer(f"{reply}")
+        except Exception as e:
+            log.info(f"EXCEPTION {e}")
 
     async def _market_command_callback(self, message: Message) -> None:
         try:

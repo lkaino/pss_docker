@@ -64,18 +64,24 @@ class MarketListener:
 
     def __init__(self, api: PSSApi, items: Items, data_path: str):
         self._interest_items = {}
+        self._trader_items = []
         self._api = api
-        self._items = items
+        self._items: Items = items
         self._last_sale_id: int = 0
         self._telegram: Optional[TelegramBot] = None
         self._data_path = data_path
         self._load_interest_items()
+        self._load_trader_items()
+        self._next_trader_check: Optional[datetime.datetime] = None
 
     def set_telegram(self, telegram: TelegramBot):
         self._telegram = telegram
 
     def list(self):
         return self._interest_items
+
+    def list_trader_items(self):
+        return self._trader_items
 
     def get_stat_keys(self):
         return self.STAT_MAX.keys()
@@ -87,22 +93,51 @@ class MarketListener:
                     raise Exception(f"Uknown stat {stat} for {name}, possible options: {self.STAT_MAX.keys()}!")
             design_id = self._items.get_design_id_by_name(name)
 
-            sales = await self._api.get_sales_for_design_id(design_id, past_days=10)
+            sales = await self._api.get_sales_for_design_id(design_id, past_days=10, max_count=50)
             mean = sales["SinglePrice"].mean()
             std = sales["SinglePrice"].std()
             mean_price = sales[(sales["SinglePrice"] > mean - std) & (sales["SinglePrice"] < mean + std)].mean(numeric_only=True)["SinglePrice"]
             self._interest_items[design_id] = {"stats": stats}
-            self.update_interest_item_price(design_id)
+            await self.update_interest_item_price(design_id)
             self.store_interest_items()
         except Exception as e:
             log.error(e)
+    
+    async def add_trader_item(self, name: str):
+        try:
+            design_id = self._items.get_design_id_by_name(name)
+            if design_id:
+                self._trader_items.append(design_id)
+            self.store_trader_items()
+        except Exception as e:
+            log.error(e)
 
+    def store_trader_items(self):
+        filename = os.path.join(self._data_path, "market", "trader_items.pickle")
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "wb") as outfile:
+            pickle.dump(self._trader_items, outfile)
+    
+    def _load_trader_items(self):
+        filename = os.path.join(self._data_path, "market", "trader_items.pickle")
+        if os.path.exists(filename):
+            with open(filename, "rb") as infile:
+                self._trader_items = pickle.load(infile)
+    
+    def remove_trader_item(self, name: str):
+        design_id = self._items.get_design_id_by_name(name)
+        if design_id in self._trader_items:
+            self._trader_items.remove(design_id)
+            self.store_trader_items()
+            return True
+        else:
+            return False
 
-    def update_interest_item_price(self, design_id: int):
+    async def update_interest_item_price(self, design_id: int):
         item = self._interest_items[design_id]
         now = datetime.datetime.now()
         if "last_price_update" not in item or now - item["last_price_update"] > datetime.timedelta(hours=1):
-            sales = self._api.get_sales_for_design_id(design_id, past_days=10)
+            sales = await self._api.get_sales_for_design_id(design_id, past_days=10)
             mean = sales["SinglePrice"].mean()
             std = sales["SinglePrice"].std()
             mean_price = sales[(sales["SinglePrice"] > mean - std) & (sales["SinglePrice"] < mean + std)].mean(numeric_only=True)["SinglePrice"]
@@ -139,7 +174,7 @@ class MarketListener:
             else:
                 count = 20
             interest_items = self._interest_items.copy()
-            df = self._api.get_market_messages(design_id=None, count=count)
+            df = await self._api.get_market_messages(design_id=None, count=count)
             if df is not None:
                 df = df[df["SaleId"] > self._last_sale_id]
                 for index, row in df.iterrows():
@@ -150,13 +185,13 @@ class MarketListener:
                         can_have_substats = self._items.item_can_have_substats(msg.design_id)
                         if can_have_substats:
                             for stat in vals["stats"]:
-                                if stat in msg:
+                                if stat in msg.stat_name:
                                     interesting = True
                         else:
                             interesting = True
 
                         if interesting:
-                            self.update_interest_item_price(msg.design_id)
+                            await self.update_interest_item_price(msg.design_id)
                             market_price = interest_items[msg.design_id]["mean_price"]
                             if can_have_substats:
                                 stat_percentage = 1 + msg.stat_amount / self.STAT_MAX[msg.stat_name]
@@ -186,7 +221,8 @@ class MarketListener:
                                 price_comment = "Cheap"
                                 icon = '\U0001F7E2'
 
-                            if can_have_substats or (not can_have_substats and price_comment != "Expensive"): 
+                            #if can_have_substats or (not can_have_substats and price_comment != "Expensive"):
+                            if price_comment != "Expensive":
                                 name = self._items.get_name_by_design_id(msg.design_id)
                                 message = f'{icon} <b>{name}</b> - '
                                 if can_have_substats:
@@ -195,7 +231,43 @@ class MarketListener:
                                 if not bux:
                                     message += f'{msg.currency} '
                                 message += f'- <a href="https://pixyship.com/item/{msg.design_id}">pixyship</a>'
-                                await self._telegram.send_message(message, html=False)
+                                await self._telegram.send_message(message, html=True)
                                 log.info(message)
                     self._last_sale_id = max(self._last_sale_id, msg.sale_id)
             await asyncio.sleep(2)
+    
+    async def run_trader_check(self):
+        first = True
+        while True:
+            df = await self._api.get_star_system_markers()
+            if df is not None and len(df) > 0:
+                next_utc = df["StarSystemArrivalDate"][0].to_pydatetime()
+                now_utc = datetime.datetime.utcnow()
+                wait_time_seconds = float((next_utc - now_utc).seconds + 10)
+
+                items = [int(x.split(":")[1]) for x in df["RewardString"][0].split("|")]
+                costs = []
+                for cost in df["CostString"][0].split("|"):
+                    parts = cost.split(":")[1].split("x")
+                    cost_design_id = int(parts[0])
+                    cost_amount = int(parts[1])
+                    costs.append((cost_design_id, cost_amount))
+                
+                interest_items = self._trader_items.copy()
+                index = 0
+                for item in items:
+                    if item in interest_items:
+                        name = self._items.get_name_by_design_id(item)
+                        cost = costs[index]
+                        cost_name = self._items.get_name_by_design_id(cost[0])
+                        cost_amount = cost[1]
+                        message = f'<i>trader</i> - <b>{name}</b> - {cost_amount} {cost_name} '
+                        message += f'- <a href="https://pixyship.com/item/{item}">pixyship</a>'
+                        await self._telegram.send_message(message, html=True)
+                    index += 1
+            else:
+                wait_time_seconds = 5
+            
+            log.info(f"Trader wait time {wait_time_seconds} seconds.")
+            await asyncio.sleep(wait_time_seconds)
+

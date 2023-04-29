@@ -141,6 +141,7 @@ async def main():
     api = PSSApi(data_path)
     await api.setup()
     items = Items(data_path, api)
+    await items.setup()
     market = MarketListener(api, items, data_path)
 
     with open (os.path.join(data_path, "config.json")) as f:
@@ -151,6 +152,7 @@ async def main():
 
     await asyncio.gather(
         market.run(),
+        market.run_trader_check(),
         bot.run())
 
 
