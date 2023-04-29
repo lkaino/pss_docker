@@ -168,12 +168,17 @@ class MarketListener:
     async def run(self):
         first = True
         while True:
+            interest_items = self._interest_items.copy()
+            if len(interest_items) == 0:
+                await asyncio.sleep(2)
+                continue
+
             if first:
                 count = 999999
                 first = False
             else:
                 count = 20
-            interest_items = self._interest_items.copy()
+
             df = await self._api.get_market_messages(design_id=None, count=count)
             if df is not None:
                 df = df[df["SaleId"] > self._last_sale_id]
@@ -237,7 +242,6 @@ class MarketListener:
             await asyncio.sleep(2)
     
     async def run_trader_check(self):
-        first = True
         while True:
             df = await self._api.get_star_system_markers()
             if df is not None and len(df) > 0:

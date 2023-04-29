@@ -2,6 +2,8 @@ from typing import Optional
 from pss_api import PSSApi
 from market_listener import MarketListener
 from items import Items
+from characters import Characters
+from fleet_listener import FleetListener
 import time
 import re
 import telegram_bot
@@ -137,6 +139,8 @@ def consumables(api: PSSApi):
 
 async def main():
     data_path = "/data"
+    if not os.path.exists(data_path):
+        data_path = "data"
 
     api = PSSApi(data_path)
     await api.setup()
@@ -144,16 +148,23 @@ async def main():
     await items.setup()
     market = MarketListener(api, items, data_path)
 
+    characters = Characters(data_path, api)
+    await characters.setup()
+
+    fleet = FleetListener(api, characters, items, data_path)
+
     with open (os.path.join(data_path, "config.json")) as f:
         config = json.load(f)
 
-    bot = telegram_bot.TelegramBot(config["telegram"], market, items)
+    bot = telegram_bot.TelegramBot(config["telegram"], market, items, fleet)
     market.set_telegram(bot)
+    fleet.set_telegram(bot)
 
     await asyncio.gather(
         market.run(),
         market.run_trader_check(),
-        bot.run())
+        bot.run(),
+        fleet.run())
 
 
 if __name__ == "__main__":

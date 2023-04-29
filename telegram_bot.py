@@ -3,8 +3,24 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
 import logging as log
 
+
+def get_item_from_texts(texts) -> (str, int):
+    index = 2
+    item = texts[index]
+    if '"' in item:
+        log.info(f"\" in \"{item}\"")
+        for next_item in texts[3:]:
+            index += 1
+            item += f" {next_item}"
+            if '"' in next_item:
+                break
+    else:
+        log.info(f"\" not in \"{item}\"")
+    item = item.replace('"', "")
+    return item, index
+
 class TelegramBot:
-    def __init__(self, config, market, items):
+    def __init__(self, config, market, items, fleet_listener):
         self._config = config
         self._token = config["token"]
         self._chat_id = config["chat_id"]
@@ -12,6 +28,7 @@ class TelegramBot:
         self._dp = Dispatcher(bot=self._bot)
         self._market = market
         self._items = items
+        self._fleet_listener = fleet_listener
         self._setup_message_handlers()
 
     def _setup_message_handlers(self):
@@ -19,6 +36,7 @@ class TelegramBot:
             (self._start_command_callback, ['start']),
             (self._market_command_callback, ['market']),
             (self._trader_command_callback, ['trader']),
+            (self._fleet_command_callback, ['fleet']),
             (self._echo_handler, None)
         ]
 
@@ -39,21 +57,6 @@ class TelegramBot:
             stats = []
             fail = False
             all_stats = self._market.get_stat_keys()
-
-            def get_item_from_texts(texts) -> (str, int):
-                    index = 2
-                    item = texts[index]
-                    if '"' in item:
-                        log.info(f"\" in \"{item}\"")
-                        for next_item in texts[3:]:
-                            index += 1
-                            item += f" {next_item}"
-                            if '"' in next_item:
-                                break
-                    else:
-                        log.info(f"\" not in \"{item}\"")
-                    item = item.replace('"', "")
-                    return item, index
 
             if command == "add":
                 if len(texts) >= 3:
@@ -104,21 +107,6 @@ class TelegramBot:
             fail = False
             all_stats = self._market.get_stat_keys()
 
-            def get_item_from_texts(texts) -> (str, int):
-                    index = 2
-                    item = texts[index]
-                    if '"' in item:
-                        log.info(f"\" in \"{item}\"")
-                        for next_item in texts[3:]:
-                            index += 1
-                            item += f" {next_item}"
-                            if '"' in next_item:
-                                break
-                    else:
-                        log.info(f"\" not in \"{item}\"")
-                    item = item.replace('"', "")
-                    return item, index
-
             if command == "add":
                 if len(texts) >= 3:
                     item, index = get_item_from_texts(texts)
@@ -165,6 +153,57 @@ class TelegramBot:
                 await message.answer(f"{reply}")
         except Exception as e:
             log.info(f"EXCEPTION {e}")
+
+    async def _fleet_command_callback(self, message: Message) -> None:
+        texts = message.text.split(" ")
+        reply = "Invalid command. Usage:\n/fleet name \"Fleet name\"\n/fleet addcrew \"WPN 10\"\n/fleet removecrew \"WPN\"\n/fleet show"
+        if len(texts) > 1:
+            command = texts[1]
+            if command == "addcrew":
+                items = texts[2:]
+                if len(items) != 2:
+                    pass
+                else:
+                    stat = items[0]
+                    try:
+                        amount = float(items[1])
+                    except:
+                        amount = None
+                        reply = f"{items[1]} is not a number"
+
+                    if amount is not None:
+                        all_stats = self._market.get_stat_keys()
+                        if stat not in all_stats:
+                            reply = f"Stat {stat} not in ({list(all_stats)})!"
+                        else:
+                            self._fleet_listener.add_interest_crew(stat, amount)
+                            reply = f"{stat} - {amount} added."
+            elif command == "removecrew":
+                if len(texts) != 3:
+                    pass
+                else:
+                    stat = texts[2]
+                    all_stats = self._market.get_stat_keys()
+                    if stat not in all_stats:
+                        reply = f"Stat {stat} not in ({list(all_stats)})!"
+                    else:
+                        self._fleet_listener.remove_interest_crew(stat)
+                        reply = f"{stat} removed."
+            elif command == "name":
+                name, index = get_item_from_texts(texts)
+                success = await self._fleet_listener.set_fleet(name)
+                if not success:
+                    reply = f"No such fleet: {name}"
+                else:
+                    reply = f"Started monitoring {name}"
+            elif command == "show":
+                reply = "Current crew:\n"
+                async for text in self._fleet_listener.get_current_messages():
+                    reply += text + "\n"
+            else:
+                reply = f"Unknown command {command}"
+
+        await message.answer(f"{reply}")
 
 
     async def _start_command_callback(self, message: Message) -> None:

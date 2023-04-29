@@ -14,15 +14,17 @@ class Items:
 
     def __init__(self, data_path, api: PSSApi):
         self._filename = os.path.join(data_path, "items", f"df")
+        self._api = api
+        self._items: Optional[Items] = None
     
     async def setup(self):
         if os.path.exists(self._filename):
             with open(self._filename, "rb") as infile:
                 self._items = pickle.load(infile)
         else:
-            self._items = await api.get_items()
+            self._items = await self._api.get_items()
             os.makedirs(os.path.dirname(self._filename), exist_ok=True)
-            with open(filename, "wb") as outfile:
+            with open(self._filename, "wb") as outfile:
                 pickle.dump(self._items, outfile)
 
     def get_design_id_by_name(self, name: str) -> Optional[int]:
@@ -74,3 +76,12 @@ class Items:
         rarity = self.get_rarity(design_id)
         subtype = self.get_subtype(design_id)
         return "Equipment" in subtype and rarity in ("Hero", "Special", "Legendary")
+
+    def get_enhancement(self, design_id: int) -> (Optional[str], Optional[float]):
+        row = self._items[self._items["ItemDesignId"] == design_id].iloc[0]
+        type = row.EnhancementType
+        if 'None' in type:
+            return None, None
+        else:
+            value = float(row.EnhancementValue)
+        return type, value

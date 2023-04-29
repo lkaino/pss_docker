@@ -30,7 +30,8 @@ class PSSApi:
             with open(filename, "rb") as infile:
                 data = pickle.load(infile)
                 log.info(f"Creating device with {data}")
-                dev = Device(device_key=data[0], can_login_until=data[1], access_token=data[2], last_login=data[3])
+                dev = Device(
+                    device_key=data[0], can_login_until=data[1], access_token=data[2], last_login=data[3])
         else:
             dev = Device(_create_device_key())
             token = await dev.get_access_token()
@@ -45,18 +46,38 @@ class PSSApi:
             self.token = await self._get_token(get_new=True)
 
     async def get_items(self, _token=None) -> pd.DataFrame:
-        log.info(f"Getting sales for id {id}")
         df: pd.DataFrame = None
         params = {
             'accessToken': await self._get_token(),
         }
         try:
-            response = requests.get(self.BASE_URL + "ItemService/ListItemDesigns2", params=params)
+            response = requests.get(
+                self.BASE_URL + "ItemService/ListItemDesigns2", params=params)
         except Exception as e:
             return df
 
         try:
-            df = pd.read_xml(response.text, xpath="/ItemService/ListItemDesigns/ItemDesigns//ItemDesign")
+            df = pd.read_xml(
+                response.text, xpath="/ItemService/ListItemDesigns/ItemDesigns//ItemDesign")
+        except Exception as e:
+            await self._check_if_token_expired_from_response(response.text)
+            print(f"ERROR: {e}: {response.text}")
+
+        return df
+
+    async def get_characters(self, _token=None) -> pd.DataFrame:
+        df: pd.DataFrame = None
+        params = {
+        }
+        try:
+            response = requests.get(
+                self.BASE_URL + "CharacterService/ListAllCharacterDesigns2", params=params)
+        except Exception as e:
+            return df
+
+        try:
+            df = pd.read_xml(
+                response.text, xpath="/CharacterService/ListAllCharacterDesigns/CharacterDesigns//CharacterDesign")
         except Exception as e:
             await self._check_if_token_expired_from_response(response.text)
             print(f"ERROR: {e}: {response.text}")
@@ -70,7 +91,8 @@ class PSSApi:
             'accessToken': await self._get_token(),
         }
         try:
-            response = requests.get(self.BASE_URL + "GalaxyService/ListStarSystemMarkers", params=params)
+            response = requests.get(
+                self.BASE_URL + "GalaxyService/ListStarSystemMarkers", params=params)
         except Exception as e:
             return df
 
@@ -95,13 +117,15 @@ class PSSApi:
                 'to': end,
                 'accessToken': await self._get_token(),
             }
-            response = requests.get(self.BASE_URL + "/MarketService/ListSalesByItemDesignId", params=params)
+            response = requests.get(
+                self.BASE_URL + "/MarketService/ListSalesByItemDesignId", params=params)
             try:
                 df_new = pd.read_xml(response.text, xpath="/MarketService/ListSalesByItemDesignId/Sales//Sale",
                                      parse_dates=["StatusDate"])
             except Exception as e:
                 if "Too many" in response.text:
-                    log.info(f"Got too many response while getting sales for {design_id}")
+                    log.info(
+                        f"Got too many response while getting sales for {design_id}")
                     await asyncio.sleep(10)
                     continue
                 await self._check_if_token_expired_from_response(response.text)
@@ -109,7 +133,8 @@ class PSSApi:
                 return df
             len_all = len(df_new)
             df_new = df_new[df_new["CurrencyType"] == "Starbux"]
-            df_new["SinglePrice"] = df_new["CurrencyValue"] / df_new["Quantity"]
+            df_new["SinglePrice"] = df_new["CurrencyValue"] / \
+                df_new["Quantity"]
             if len_all > 0:
                 if df is None:
                     df = df_new
@@ -144,7 +169,8 @@ class PSSApi:
             params['itemDesignId'] = design_id
         log.debug(params)
         try:
-            response = requests.get(self.BASE_URL + "/MessageService/ListActiveMarketplaceMessages5", params=params)
+            response = requests.get(
+                self.BASE_URL + "/MessageService/ListActiveMarketplaceMessages5", params=params)
         except Exception as e:
             print(e)
             return df
@@ -153,6 +179,56 @@ class PSSApi:
             log.debug(f"RESPONSE {response.text}")
             df = pd.read_xml(response.text, xpath="/MessageService/ListActiveMarketplaceMessages/Messages//Message",
                              parse_dates=["MessageDate"])
+        except Exception as e:
+            await self._check_if_token_expired_from_response(response.text)
+            if "Too many" in response.text:
+                time.sleep(10)
+        return df
+
+    async def get_available_donated_crew_for_fleet(self, fleet_id: int, count=999999) -> pd.DataFrame:
+        log.debug(f"Getting donated crew for id {fleet_id}")
+
+        df: pd.DataFrame = None
+        params = {
+            'allianceId': fleet_id,
+            'skip': 0,
+            'take': count,
+            'accessToken': await self._get_token(),
+        }
+        try:
+            response = requests.get(
+                self.BASE_URL + "/AllianceService/ListCharactersGivenInAlliance", params=params)
+        except Exception as e:
+            print(e)
+            return df
+
+        try:
+            log.debug(f"RESPONSE {response.text}")
+            df = pd.read_xml(response.text, xpath="/AllianceService/ListCharactersGivenInAlliance/Characters//Character",
+                             stylesheet="fleetitems.xsl",
+                             parse_dates=["TrainingEndDate", "DeploymentDate", "AvailableDate"])
+        except Exception as e:
+            await self._check_if_token_expired_from_response(response.text)
+            if "Too many" in response.text:
+                time.sleep(10)
+        return df
+
+    async def get_alliances(self, count=100) -> pd.DataFrame:
+        df: pd.DataFrame = None
+        params = {
+            'take': count,
+        }
+        try:
+            response = requests.get(
+                self.BASE_URL + "/AllianceService/ListAlliancesByRanking", params=params)
+        except Exception as e:
+            print(e)
+            return df
+
+        try:
+            log.debug(f"RESPONSE {response.text}")
+            df = pd.read_xml(response.text, xpath="/AllianceService/ListAlliancesByRanking/Alliances//Alliance",
+                             parse_dates=["ImmunityDate"])
         except Exception as e:
             await self._check_if_token_expired_from_response(response.text)
             if "Too many" in response.text:
