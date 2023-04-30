@@ -121,8 +121,8 @@ class FleetListener:
 
             df = await self._api.get_available_donated_crew_for_fleet(self._alliance_id)
             if self._crew_df is not None:
-                merged = df.merge(self._crew_df, how='left', indicator=True)
-                new = df[merged['_merge'] == 'right_only']
+                merged = self._crew_df.merge(df, how="right", indicator=True)
+                new = merged[merged["_merge"] == "right_only"]
             else:
                 new = df
 

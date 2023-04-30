@@ -156,7 +156,7 @@ class TelegramBot:
 
     async def _fleet_command_callback(self, message: Message) -> None:
         texts = message.text.split(" ")
-        reply = "Invalid command. Usage:\n/fleet name \"Fleet name\"\n/fleet addcrew \"WPN 10\"\n/fleet removecrew \"WPN\"\n/fleet show"
+        reply = "Invalid command. Usage:\n/fleet name \"Fleet name\"\n/fleet addcrew \"WPN 10\"\n/fleet removecrew \"WPN\"\n/fleet"
         if len(texts) > 1:
             command = texts[1]
             if command == "addcrew":
@@ -196,13 +196,16 @@ class TelegramBot:
                     reply = f"No such fleet: {name}"
                 else:
                     reply = f"Started monitoring {name}"
-            elif command == "show":
-                reply = "Current crew:\n"
-                async for text in self._fleet_listener.get_current_messages():
-                    reply += text + "\n"
             else:
                 reply = f"Unknown command {command}"
+        else:
+            texts = []
+            async for text in self._fleet_listener.get_current_messages():
+                texts.append(text)
 
+            if len(texts) > 0:
+                joined_texts = '\n'.join(texts)
+                reply = f"Current crew matching criteria:\n{joined_texts}"
         await message.answer(f"{reply}")
 
 
