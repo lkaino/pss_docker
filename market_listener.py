@@ -34,6 +34,56 @@ class MarketMessage:
             self.stat_amount = None
             self.stat_name = None
 
+class BonusStatImportance:
+    HIGH = 1.0
+    MODERATE = 0.5
+    SLIGHTLY = 0.2
+    NEUTRAL = 0.0
+    LOW = -0.2
+
+    @staticmethod
+    def get_importance(main_stat: str, off_stat: str) -> float:
+        support_stats = [
+            "Weapon",
+            "Science",
+            "Engine",
+            "Pilot"
+        ]
+        other = [
+            "Ability",
+            "Hp",
+            "Stamina",
+            "Attack",
+            "FireResistance",
+            "Repair",
+        ]
+
+        def either_is_in(_main, _off, _list):
+            return any(s in _list for s in (_main, _off))
+
+        def both_are_in(_main, _off, _list):
+            return all(s in _list for s in (_main, _off))
+
+        if main_stat == off_stat:
+            return BonusStatImportance.HIGH
+        if both_are_in(main_stat, off_stat, support_stats):
+            return BonusStatImportance.LOW
+        # one of the stats is a support stat
+        elif either_is_in(main_stat, off_stat, support_stats):
+            if either_is_in(main_stat, off_stat, ("Ability")):
+                return BonusStatImportance.NEUTRAL
+            elif either_is_in(main_stat, off_stat, ("Hp")):
+                return BonusStatImportance.MODERATE
+            elif either_is_in(main_stat, off_stat, ("Repair")):
+                return BonusStatImportance.NEUTRAL
+            else:
+                return BonusStatImportance.SLIGHTLY
+        # neither of the stats is in support stats
+        else:
+            if both_are_in(main_stat, off_stat, ("Hp", "Stamina", "FireResistance", "Attack")): 
+                return BonusStatImportance.MODERATE
+            return BonusStatImportance.SLIGHTLY
+        
 
 class MarketListener:
     STAT_MAX = {
@@ -199,13 +249,21 @@ class MarketListener:
                             await self.update_interest_item_price(msg.design_id)
                             market_price = interest_items[msg.design_id]["mean_price"]
                             if can_have_substats:
-                                stat_percentage = 1 + msg.stat_amount / self.STAT_MAX[msg.stat_name]
-                                cheap_price = market_price + \
-                                            market_price / 2 * stat_percentage + \
-                                            market_price / 6 * pow(stat_percentage, 2)
-                                ok_price = market_price + \
-                                        market_price * stat_percentage + \
-                                        market_price * pow(stat_percentage, 2)
+                                importance = BonusStatImportance.get_importance(self._items.get_main_stat(msg.design_id), msg.stat_name)
+                                if importance < 0:
+                                    ok_price = market_price * (1 + importance)
+                                    cheap_price = ok_price * 0.9
+                                else:
+                                    stat_percentage = 1 + msg.stat_amount / self.STAT_MAX[msg.stat_name]
+                                    
+                                    cheap_price = market_price + \
+                                                importance * \
+                                                (market_price / 2 * stat_percentage + \
+                                                market_price / 6 * pow(stat_percentage, 2))
+                                    ok_price = market_price + \
+                                            importance * \
+                                            (market_price * stat_percentage + \
+                                            market_price * pow(stat_percentage, 2))
                             else:
                                 cheap_price = market_price * 0.9
                                 ok_price = market_price * 1.1
@@ -227,11 +285,12 @@ class MarketListener:
                                 icon = '\U0001F7E2'
 
                             #if can_have_substats or (not can_have_substats and price_comment != "Expensive"):
-                            if price_comment != "Expensive":
+                            if price_comment != "Expensive" or True:
                                 name = self._items.get_name_by_design_id(msg.design_id)
                                 message = f'{icon} <b>{name}</b> - '
                                 if can_have_substats:
                                     message += f'{msg.stat_amount} {self.STAT_SHORT[msg.stat_name]} - '
+                                    message += f'cheap {int(cheap_price)} - ok {int(ok_price)} - '
                                 message += f'{msg.amount} '
                                 if not bux:
                                     message += f'{msg.currency} '

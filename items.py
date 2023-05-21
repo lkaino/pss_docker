@@ -71,6 +71,16 @@ class Items:
                 return self._items[self._items["ItemDesignId"] == design_id].iloc[0]["ItemSubType"]
             except:
                 return None
+    
+    def get_main_stat(self, design_id: int):
+        name = self.get_name_by_design_id(design_id)
+        if name is None:
+            return None
+        else:
+            try:
+                return self._items[self._items["ItemDesignId"] == design_id].iloc[0]["EnhancementType"]
+            except:
+                return None
 
     def item_can_have_substats(self, design_id: int) -> Optional[str]:
         rarity = self.get_rarity(design_id)
