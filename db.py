@@ -55,7 +55,10 @@ class Database:
     def get_last_listing_id(self) -> int:
         cursor = self.connection.cursor()
         data = cursor.execute("SELECT listing_id FROM market_listings ORDER BY listing_id DESC LIMIT 1").fetchone()
-        return data[0]
+        if len(data) > 0:
+            return data[0]
+        else:
+            return 0
 
     def get_listings(self) -> pd.DataFrame:
         return pd.read_sql_query("SELECT * from market_listings", self.connection)
@@ -84,11 +87,6 @@ class Database:
                               f"AND off_stat = '{stat_name}' "
                               f"AND off_stat_amount > {stat_amount * (1 - stat_amount_range)} "
                               f"AND off_stat_amount < {stat_amount * (1 + stat_amount_range)}", self.connection)
-        data = cursor.execute(f"SELECT * FROM market_sold "
-                              f"WHERE item_id = {item_id} "
-                              f"AND off_stat = '{stat_name}' "
-                              f"AND off_stat_amount > {stat_amount * (1 - stat_amount_range)} "
-                              f"AND off_stat_amount < {stat_amount * (1 + stat_amount_range)}").fetchall()
         return df
 
     def delete_all_market_listings(self):
