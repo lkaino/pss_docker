@@ -1,6 +1,7 @@
 from typing import List, Optional
 from items import Items
 from pss_api import PSSApi
+from db import Database
 import re
 from telegram_bot import TelegramBot
 import time
@@ -13,7 +14,7 @@ import datetime
 
 
 class MarketMessage:
-    def __init__(self, row: pd.DataFrame):
+    def __init__(self, row: pd.Series):
         self.message_id = row["MessageId"]
         self.message = row["Message"]
         arguments = row["Argument"].split("x")
@@ -22,6 +23,7 @@ class MarketMessage:
         self.sale_id = row["SaleId"]
         self.currency = row["ActivityArgument"].split(":")[0]
         self.amount = int(int(row["ActivityArgument"].split(":")[1]) / self.count)
+        self.date = row["MessageDate"].to_pydatetime()
         if "(" in self.message:
             stat_val = re.search("\(.*\)", self.message).group().split(" ")
             try:
@@ -112,17 +114,18 @@ class MarketListener:
         "Repair": "RPR",
     }
 
-    def __init__(self, api: PSSApi, items: Items, data_path: str):
+    def __init__(self, api: PSSApi, items: Items, db: Database, data_path: str):
         self._interest_items = {}
         self._trader_items = []
         self._api = api
         self._items: Items = items
+        self._db: Database = db
         self._last_sale_id: int = 0
         self._telegram: Optional[TelegramBot] = None
         self._data_path = data_path
         self._load_interest_items()
         self._load_trader_items()
-        self._next_trader_check: Optional[datetime.datetime] = None
+        self._next_sold_check: Optional[datetime.datetime] = None
 
     def set_telegram(self, telegram: TelegramBot):
         self._telegram = telegram
@@ -215,13 +218,38 @@ class MarketListener:
             with open(filename, "rb") as infile:
                 self._interest_items = pickle.load(infile)
 
+    async def _monitor_sold(self, df_new_listings: pd.DataFrame):
+        last_id = self._db.get_last_listing_id()
+        for index, row in df_new_listings.iterrows():
+            msg = MarketMessage(row)
+            if msg.sale_id > last_id:
+                if self._items.item_can_have_substats(msg.design_id):
+                    self._db.insert_market_listing(msg.sale_id, msg.design_id, msg.stat_name, msg.stat_amount,
+                                                   int(msg.amount / msg.count), msg.date)
+
+        if self._next_sold_check is not None:
+            if datetime.datetime.now() < self._next_sold_check:
+                return
+        self._next_sold_check = datetime.datetime.now() + datetime.timedelta(minutes=5)
+
+        listings = self._db.get_listings()
+        for item_id in pd.unique(listings["item_id"]):
+            sales = await self._api.get_sales_for_design_id(item_id, past_days=1, max_count=20, max_queries=1)
+            if sales is None:
+                log.error(f"Failed to get sales for {self._items.get_name_by_design_id(item_id)}!")
+                continue
+            listings_for_item = listings[listings["item_id"] == item_id]
+            for index, row in listings_for_item.iterrows():
+                sales_for_listing = sales[sales["SaleId"] == row["listing_id"]]
+                if len(sales_for_listing) > 0:
+                    sold_time = int(sales_for_listing["StatusDate"].iloc[0].to_pydatetime().timestamp())
+                    self._db.mark_sold(row["listing_id"], int(datetime.datetime.utcnow().timestamp()))
+
     async def run(self):
         first = True
+        df_prev: Optional[pd.DataFrame] = None
         while True:
             interest_items = self._interest_items.copy()
-            if len(interest_items) == 0:
-                await asyncio.sleep(2)
-                continue
 
             if first:
                 count = 999999
@@ -230,6 +258,22 @@ class MarketListener:
                 count = 20
 
             df = await self._api.get_market_messages(design_id=None, count=count)
+            if df is None:
+                continue
+            if df_prev is not None:
+                merged = df_prev.merge(df, how="right", indicator=True)
+                new = merged[merged["_merge"] == "right_only"]
+            else:
+                new = df
+            df_prev = df
+
+            if len(new) > 0:
+                await self._monitor_sold(new)
+
+            if len(interest_items) == 0:
+                await asyncio.sleep(2)
+                continue
+
             if df is not None:
                 df = df[df["SaleId"] > self._last_sale_id]
                 for index, row in df.iterrows():
@@ -331,6 +375,6 @@ class MarketListener:
             else:
                 wait_time_seconds = 5
             
-            log.info(f"Trader wait time {wait_time_seconds} seconds.")
+            log.debug(f"Trader wait time {wait_time_seconds} seconds.")
             await asyncio.sleep(wait_time_seconds)
 

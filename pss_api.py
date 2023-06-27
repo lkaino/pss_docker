@@ -14,6 +14,9 @@ class PSSApi:
 
     def __init__(self, data_path):
         self._data_path = data_path
+        self._last_query = 0
+        self._queries = 0
+        self._last_query_rate_check = 0
 
     async def setup(self):
         self._dev = await self._get_device()
@@ -46,6 +49,7 @@ class PSSApi:
             self.token = await self._get_token(get_new=True)
 
     async def get_items(self, _token=None) -> pd.DataFrame:
+        await self._throttle_queries()
         df: pd.DataFrame = None
         params = {
             'accessToken': await self._get_token(),
@@ -66,6 +70,7 @@ class PSSApi:
         return df
 
     async def get_characters(self, _token=None) -> pd.DataFrame:
+        await self._throttle_queries()
         df: pd.DataFrame = None
         params = {
         }
@@ -85,7 +90,8 @@ class PSSApi:
         return df
 
     async def get_star_system_markers(self, _token=None) -> pd.DataFrame:
-        log.info(f"Getting star system markers")
+        await self._throttle_queries()
+        log.debug(f"Getting star system markers")
         df: pd.DataFrame = None
         params = {
             'accessToken': await self._get_token(),
@@ -104,12 +110,14 @@ class PSSApi:
 
         return df
 
-    async def get_sales_for_design_id(self, design_id: int, past_days=2, max_count=100) -> pd.DataFrame:
+    async def get_sales_for_design_id(self, design_id: int, past_days=2, max_count=100, max_queries=100) -> pd.DataFrame:
         start = 0
-        end = 20
+        end = max_count
 
         df: pd.DataFrame = None
+        queries = 0
         while True:
+            await self._throttle_queries()
             params = {
                 'itemDesignId': design_id,
                 'saleStatus': 'Sold',
@@ -131,6 +139,9 @@ class PSSApi:
                 await self._check_if_token_expired_from_response(response.text)
                 log.error(f"ERROR: {response.text}")
                 return df
+
+            queries += 1
+
             len_all = len(df_new)
             df_new = df_new[df_new["CurrencyType"] == "Starbux"]
             df_new["SinglePrice"] = df_new["CurrencyValue"] / \
@@ -146,12 +157,14 @@ class PSSApi:
             end += 20
             if pd.Timestamp.now() - df["StatusDate"].min() > pd.Timedelta(days=past_days):
                 break
-            if len(df) > max_count:
+            if len(df) >= max_count:
                 break
-            await asyncio.sleep(2)
+            if queries >= max_queries:
+                break
         return df
 
     async def get_market_messages(self, design_id: Optional[int], count=999999) -> pd.DataFrame:
+        await self._throttle_queries()
 
         log.debug(f"Getting market for id {design_id}")
 
@@ -186,6 +199,7 @@ class PSSApi:
         return df
 
     async def get_available_donated_crew_for_fleet(self, fleet_id: int, count=999999) -> pd.DataFrame:
+        await self._throttle_queries()
         log.debug(f"Getting donated crew for id {fleet_id}")
 
         df: pd.DataFrame = None
@@ -214,6 +228,7 @@ class PSSApi:
         return df
 
     async def get_alliances(self, count=100) -> pd.DataFrame:
+        await self._throttle_queries()
         df: pd.DataFrame = None
         params = {
             'take': count,
@@ -234,3 +249,12 @@ class PSSApi:
             if "Too many" in response.text:
                 time.sleep(10)
         return df
+
+    async def _throttle_queries(self):
+        time_between_queries = 0.5
+        if time.time() - self._last_query < time_between_queries:
+            await asyncio.sleep(time_between_queries)
+        else:
+            self._last_query = time.time()
+
+

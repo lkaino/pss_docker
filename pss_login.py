@@ -92,9 +92,9 @@ class Device():
         """
         async with self.__token_lock:
             if self.access_token_expired:
-                log.info("Access token is expired!")
+                log.debug("Access token is expired!")
                 if self.can_login:
-                    log.info("Logging in!")
+                    log.debug("Logging in!")
                     await self.__login()
                 else:
                     raise LoginError('Cannot login currently. Please try again later.')
@@ -116,8 +116,8 @@ class Device():
             'languageKey': 'en',
         }
         if settings.PRINT_DEBUG_WEB_REQUESTS:
-            print(f'[WebRequest] Attempting to get data from url: {url}')
-            print(f'[WebRequest]   with parameters: {json.dumps(query_params, separators=(",", ":"))}')
+            log.debug(f'[WebRequest] Attempting to get data from url: {url}')
+            log.debug(f'[WebRequest]   with parameters: {json.dumps(query_params, separators=(",", ":"))}')
         async with aiohttp.ClientSession() as session:
             async with session.post(url, params=query_params) as response:
                 data = await response.text(encoding='utf-8')
@@ -125,7 +125,7 @@ class Device():
                     log_data = data or ''
                     if log_data and len(log_data) > 100:
                         log_data = log_data[:100]
-                    print(f'[WebRequest] Returned data: {log_data}')
+                    log.debug(f'[WebRequest] Returned data: {log_data}')
 
         result = utils.convert.raw_xml_to_dict(data)
         self.__last_login = utc_now

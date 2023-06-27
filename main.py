@@ -1,9 +1,11 @@
+import datetime
 from typing import Optional
 from pss_api import PSSApi
 from market_listener import MarketListener
 from items import Items
 from characters import Characters
 from fleet_listener import FleetListener
+from db import Database
 import time
 import re
 import telegram_bot
@@ -142,11 +144,14 @@ async def main():
     if not os.path.exists(data_path):
         data_path = "data"
 
+    db = Database(data_path)
+
+    #db.delete_all_market_listings()
     api = PSSApi(data_path)
     await api.setup()
     items = Items(data_path, api)
     await items.setup()
-    market = MarketListener(api, items, data_path)
+    market = MarketListener(api, items, db, data_path)
 
     characters = Characters(data_path, api)
     await characters.setup()
@@ -156,7 +161,7 @@ async def main():
     with open (os.path.join(data_path, "config.json")) as f:
         config = json.load(f)
 
-    bot = telegram_bot.TelegramBot(config["telegram"], market, items, fleet)
+    bot = telegram_bot.TelegramBot(config["telegram"], market, items, fleet, db)
     market.set_telegram(bot)
     fleet.set_telegram(bot)
 

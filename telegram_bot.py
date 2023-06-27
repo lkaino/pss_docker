@@ -1,6 +1,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
+from db import Database
 import logging as log
 
 
@@ -19,8 +20,9 @@ def get_item_from_texts(texts) -> (str, int):
     item = item.replace('"', "")
     return item, index
 
+
 class TelegramBot:
-    def __init__(self, config, market, items, fleet_listener):
+    def __init__(self, config, market, items, fleet_listener, db: Database):
         self._config = config
         self._token = config["token"]
         self._chat_id = config["chat_id"]
@@ -29,6 +31,7 @@ class TelegramBot:
         self._market = market
         self._items = items
         self._fleet_listener = fleet_listener
+        self._db = db
         self._setup_message_handlers()
 
     def _setup_message_handlers(self):
@@ -37,6 +40,7 @@ class TelegramBot:
             (self._market_command_callback, ['market']),
             (self._trader_command_callback, ['trader']),
             (self._fleet_command_callback, ['fleet']),
+            (self._price_command_callback, ['price']),
             (self._echo_handler, None)
         ]
 
@@ -206,6 +210,36 @@ class TelegramBot:
             if len(texts) > 0:
                 joined_texts = '\n'.join(texts)
                 reply = f"Current crew matching criteria:\n{joined_texts}"
+        await message.answer(f"{reply}")
+
+    async def _price_command_callback(self, message: Message) -> None:
+        texts = message.text.split(" ")
+        reply = "Invalid command. Usage:\n/price King Husky 1 HP"
+        name_parts = []
+        stat_amount = None
+        stat = ""
+        if len(texts) > 2:
+            for part in texts:
+                if not part.isnumeric():
+                    if stat_amount is None:
+                        name_parts.append(part)
+                    else:
+                        stat = part
+                else:
+                    stat_amount = float(part)
+
+            all_stats = self._market.get_stat_keys()
+            if stat not in all_stats:
+                reply = f"Stat {stat} not in ({list(all_stats)})!"
+            else:
+                name = ' '.join(name_parts[1:])
+                item_id = self._items.get_design_id_by_name(name)
+                df = self._db.get_sold_prices(item_id, stat, stat_amount)
+                if len(df) > 0:
+                    reply = f"{name} - {len(df)} samples - min {df.mean()['price']} - max {df.max()['price']} - mean {df.mean(numeric_only=True)['price']}"
+                else:
+                    reply = "No data"
+
         await message.answer(f"{reply}")
 
 
