@@ -55,7 +55,7 @@ class Database:
     def get_last_listing_id(self) -> int:
         cursor = self.connection.cursor()
         data = cursor.execute("SELECT listing_id FROM market_listings ORDER BY listing_id DESC LIMIT 1").fetchone()
-        if len(data) > 0:
+        if data and len(data) > 0:
             return data[0]
         else:
             return 0
